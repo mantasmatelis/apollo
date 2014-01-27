@@ -37,13 +37,16 @@ func main() {
 	router.SetRoutes(
 		/* Server */
 		route.Route{"GET", "/ping", ping},
-		route.Route{"GET", "/:AuthToken/:PartyId/registerParty", registerParty},
-		route.Route{"GET", "/:AuthToken/:PartyId/update", update},
+		route.Route{"POST", "/:AuthToken/:PartyId/registerParty", registerParty},
+		route.Route{"POST", "/:AuthToken/:PartyId/update", update},
+		route.Route{"GET", "/:AuthToken/:PartyId/getAttending", getAttending},
 
 		/* Both */
 		route.Route{"GET", "/:AuthToken/getParties", getParties},
 
 		/* Client */
+		route.Route{"GET", "/:AuthToken/parties", getActiveParties},
+		route.Route{"GET", "/:AuthToken/:PartyId/getLibrary", getLibrary},
 		route.Route{"GET", "/:AuthToken/:PartyId/getPlaylist", getPlaylist},
 		route.Route{"GET", "/:AuthToken/:PartyId/:SongId/up", upVote},
 		route.Route{"GET", "/:AuthToken/:PartyId/:SongId/down", downVote},
@@ -57,13 +60,14 @@ func main() {
 		Handler: http.HandlerFunc(s.handleRequest),
 	}
 	parties = make(map[string]*Party)
-	parties["potato"] = &Party{}
+	parties["potato"] = &Party{Events: make([]Event, 0)}
 
 	hs.ListenAndServe()
 }
 
 type Party struct {
 	Playlist string
+	Library  string
 	Events   []Event
 }
 
@@ -79,8 +83,44 @@ func ping(w http.ResponseWriter, req *http.Request, params map[string]string) {
 
 }
 
+type SimpleUser struct {
+	Id string
+}
+
+func getIdForToken(token string, w http.ResponseWriter) {
+	res, err := http.DefaultClient.Get("https://graph.facebook.com/me?access_token=" + token)
+	if err != nil {
+		http.Error(w, "Facebook blew up", 499)
+		log.Print(err)
+		return
+	}
+	resp, err := ioutil.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		http.Error(w, "Not able to read", 499)
+		log.Print(err)
+		return
+	}
+	fmt.Printf("%s\n", resp)
+
+	var data interface{}
+	json.Unmarshal([]byte(resp), data)
+
+	log.Print(data)
+}
+
 func registerParty(w http.ResponseWriter, req *http.Request, params map[string]string) {
-	parties[params["PartyId"]] = &Party{}
+	resp, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		http.Error(w, "Registering party blew up", 499)
+		log.Print(err)
+		return
+	}
+
+	log.Print("Register party: " + string(resp))
+
+	parties[params["PartyId"]] = &Party{Events: make([]Event, 0), Library: string(resp)}
+
 }
 
 func update(w http.ResponseWriter, req *http.Request, params map[string]string) {
@@ -104,6 +144,24 @@ func update(w http.ResponseWriter, req *http.Request, params map[string]string) 
 	w.Write(data)
 }
 
+func getAttending(w http.ResponseWriter, req *http.Request, params map[string]string) {
+	res, err := http.DefaultClient.Get("https://graph.facebook.com/" + params["PartyId"] + "/attending?access_token=" + params["AuthToken"])
+	if err != nil {
+		http.Error(w, "Facebook blew up", 499)
+		log.Print(err)
+		return
+	}
+	resp, err := ioutil.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		http.Error(w, "Not able to read", 499)
+		log.Print(err)
+		return
+	}
+	fmt.Printf("%s", resp)
+	w.Write(resp)
+}
+
 func getParties(w http.ResponseWriter, req *http.Request, params map[string]string) {
 	res, err := http.DefaultClient.Get("https://graph.facebook.com/me/events?access_token=" + params["AuthToken"])
 	if err != nil {
@@ -123,6 +181,25 @@ func getParties(w http.ResponseWriter, req *http.Request, params map[string]stri
 
 }
 
+func getActiveParties(w http.ResponseWriter, req *http.Request, params map[string]string) {
+	names := make([]string, 0, 10)
+	for k, _ := range parties {
+		names = append(names, k)
+	}
+	//w.Write()
+}
+
+func getLibrary(w http.ResponseWriter, req *http.Request, params map[string]string) {
+	party, ok := parties[params["PartyId"]]
+
+	if !ok {
+		http.Error(w, "No party", 404)
+		return
+	}
+	log.Print(party.Library)
+	w.Write([]byte(party.Library))
+}
+
 func getPlaylist(w http.ResponseWriter, req *http.Request, params map[string]string) {
 	party, ok := parties[params["PartyId"]]
 
@@ -140,6 +217,7 @@ func upVote(w http.ResponseWriter, req *http.Request, params map[string]string) 
 		http.Error(w, "No party", 404)
 	}
 	party.Events = append(party.Events, Event{Type: 1, UserId: params["AuthToken"], SongId: params["SongId"]})
+	getIdForToken(params["AuthToken"], w)
 }
 
 func downVote(w http.ResponseWriter, req *http.Request, params map[string]string) {
@@ -149,6 +227,7 @@ func downVote(w http.ResponseWriter, req *http.Request, params map[string]string
 		http.Error(w, "No party", 404)
 	}
 	party.Events = append(party.Events, Event{Type: -1, UserId: params["AuthToken"], SongId: params["SongId"]})
+	getIdForToken(params["AuthToken"], w)
 }
 
 func nullVote(w http.ResponseWriter, req *http.Request, params map[string]string) {
@@ -159,4 +238,5 @@ func nullVote(w http.ResponseWriter, req *http.Request, params map[string]string
 	}
 
 	party.Events = append(party.Events, Event{Type: 0, UserId: params["AuthToken"], SongId: params["SongId"]})
+	getIdForToken(params["AuthToken"], w)
 }

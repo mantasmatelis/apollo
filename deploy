@@ -1,0 +1,1 @@
+scp ./apollo-linux root@apollo.mantasmatelis.com:/srv/web/apollo/
